@@ -1,11 +1,12 @@
 # Koirakartta
 
-Mobiilisti käytettävä PWA koirakkohavaintojen kirjaamiseen. Käyttäjä vetää
-sormella nuolen kartalle: alkupiste = missä koirakko nähtiin, suunta = mihin
-se käveli. Havainnoista muodostuu (1) yhteisön heatmap siitä, milloin ja missä
-koirakoita liikkuu, ja (2) ennuste siitä, minne koirakko todennäköisesti
-päätyy tie- ja polkuverkossa. Tarkoitus: reaktiivisten koirien omistajat
-välttävät kohtaamisia.
+Mobiilisti käytettävä PWA koirakkohavaintojen kirjaamiseen. Havainto on yksi
+sormella vedetty viiva kartalle: alkupiste = missä koirakko nähtiin, suunta
+= mihin se käveli. Viiva vedetään aina havaintohetkellä, eikä muuta syötettä
+tarvita. Koirien määrällä ei ole väliä. Havainnoista muodostuu (1) yhteisön
+heatmap siitä, milloin ja missä koirakoita liikkuu, ja (2) ennuste siitä,
+minne koirakko todennäköisesti päätyy tie- ja polkuverkossa. Tarkoitus:
+reaktiivisten koirien omistajat välttävät kohtaamisia.
 
 ## Pino
 - Next.js (App Router) + TypeScript + Tailwind, hostaus Vercelissä
@@ -18,6 +19,9 @@ välttävät kohtaamisia.
 ## Periaatteet
 - Mobiili ensin (iPhone Safari ja kotinäytölle asennettu PWA), isot
   kosketusalueet, huomioi safe-area-insetit
+- Havainnon kirjaus = yksi ele: vedä viiva, sormi ylös, tallentuu. Ja viiva/nuoli jaa paikalleen ja tulee popup. "Onko koirakon paikka ja suunta oikea?" Jossa ok tai kumoa. EI lomakkeita,
+  EI pakollisia lisäkenttiä. Virhekirjauksen varalta
+  näytetään lyhyt "Kumoa"-ilmoitus (5 s).
 - UI-tekstit suomeksi, koodi ja kommentit englanniksi
 - Käyttäjä kirjautuu anonyymisti automaattisesti, ei lomakkeita
 - Kaikki taulut RLS:n alla. Älä koskaan käytä service role -avainta selaimessa.
@@ -29,19 +33,23 @@ välttävät kohtaamisia.
 - Rehellisyys: jos dataa on vähän, UI sanoo sen ("arvio, vähän dataa").
   Älä esitä todennäköisyyksiä varmoina äläkä arvaa tyhjästä.
 - Ajat tallennetaan timestamptz (UTC), esitys ja ryhmittely Europe/Helsinki.
+  seen_at asetetaan palvelimella (default now()), ei asiakkaalta.
 - Pidä komponentit pieninä. Client-komponentit vain karttaan ja kosketukseen.
 - Älä lisää kirjastoja ilman perustetta, selitä lyhyesti jos lisäät.
 - Älä aja migraatioita tai skriptejä itse: näytä SQL/koodi, minä ajan.
 - Salaisuudet vain ympäristömuuttujissa.
 
 ## Tietomalli
-- sightings: id, user_id (default auth.uid()), seen_at, location
-  geography(Point,4326), heading (0-360), dog_count (1-3), off_leash (bool,
-  nullable), temperature_c, precipitation_mm, wind_ms, notes, created_at,
-  edge_id (nullable, kiinnitys tieverkkoon)
+- sightings: id, user_id (default auth.uid()), seen_at (default now()),
+  location geography(Point,4326) = viivan alkupiste, heading (0-360) =
+  viivan suunta, temperature_c, precipitation_mm, wind_ms (haetaan
+  automaattisesti, nullable), created_at, edge_id (nullable, kiinnitys
+  tieverkkoon)
 - nodes, edges: OSM-tieverkko (edge = tienpätkä solmusta solmuun, geometry
   LineString, length_m, highway_type)
 - edge_flow: edge_id, direction ('fwd'|'rev'), count. Kasvaa havainnoista.
+- Kaikki havainnot painavat yhtä paljon: yksi viiva = yksi havainto,
+  koirien määrää ei tallenneta.
 
 ## Ennustelogiikka (ydinsäännöt)
 - Kävelyvauhti 1,3 m/s (epävarmuus: 0,9-1,6 m/s)
@@ -51,3 +59,114 @@ välttävät kohtaamisia.
 - Katkaise haara kun P < 0,03
 - Jos havainto ei ole lähellä tietä (> 40 m) tai verkkoa ei ole: käytä viuhkaa
   (suunta ± 35°, pituus = aika * vauhti)
+
+
+
+  Prompti 6: Omat havainnot
+
+Näytä käyttäjän omat havainnot nuolina (suunta = heading), väri kellonajan
+mukaan. Napautus avaa tiedot (aika, sää, määrä) ja "Poista"-napin. Hae vain
+omat rivit. Lisää kerroksen päälle/pois -kytkin.
+
+Prompti 7: PWA
+
+Tee asennettava PWA: manifest (Koirakartta, standalone, ikonit 192/512
+placeholderit), apple-touch-icon, apple-mobile-web-app-capable, theme-color.
+Lisää banneri, joka iPhonen Safarissa kehottaa: Jaa → Lisää kotinäytölle,
+ja piilota se kun sovellus on jo standalone-tilassa tai banneri suljettu.
+Vaihe B: Heatmap ja lenkkiapu
+
+Prompti 8: Heatmap
+
+Migraatio 002: RPC get_sighting_grid(weekday int, hour_from int, hour_to int,
+min_lon, min_lat, max_lon, max_lat). Security definer. Käytä
+Europe/Helsinki-aikaa viikonpäivälle ja tunnille. Aggregoi ST_SnapToGrid:llä
+~100 m ruutuihin, palauta vain ruudut joissa on vähintään 3 ERI user_id:tä:
+ruudun keskipiste, havaintojen määrä. Älä palauta user_id:tä eikä tarkkoja
+pisteitä. Paina tuoreempia havaintoja (viimeiset 12 kk, vanhemmat pienemmällä
+painolla). Frontendiin MapLibre heatmap-kerros + suodattimet (viikonpäivä,
+kellonaikaväli 0-24). Oma data erillisenä kerroksena. Jos dataa ei ole,
+näytä selkeä viesti.
+
+Prompti 9: “Lähdössä lenkille”
+
+Lisää nappi "Lähdössä lenkille": hae sijainti, nykyinen viikonpäivä ja
+kellonaika, kutsu get_sighting_grid 1 km säteellä ±1 h ikkunassa. Näytä
+riskitaso (rauhallista / jonkin verran / vilkasta) ja kolme rauhallisinta
+tuntia tälle päivälle. Jos dataa on liian vähän, sano se suoraan äläkä arvaa.
+Vaihe C: Ennuste
+
+Prompti 10: Viuhka (ei verkkoa)
+
+Kun käyttäjä napauttaa havaintoa, näytä "Ennuste"-paneeli: slider 1-10 min.
+Piirrä alkupisteestä viuhka suuntaan heading, ±35°, pituus = minuutit * 60 *
+1,3 m. GeoJSON-polygon, läpinäkyvä väri. Näytä teksti "Karkea arvio: ei
+tietoa reiteistä". Tee viuhkan geometrian laskenta erilliseksi puhtaaksi
+funktioksi testeineen.
+
+Prompti 11: OSM-verkko
+
+Tee scripts/import-osm.ts (ajetaan tsx:llä, käyttää service role -avainta).
+Hae Overpass API:sta annetun bounding boxin kävelykelpoiset tiet
+(highway=residential|service|footway|path|track|pedestrian|living_street|
+cycleway|unclassified|tertiary|secondary). Pilko tiet risteyksistä ja
+päätepisteistä kaariksi. Migraatio 003: taulut nodes ja edges (from_node,
+to_node, geometry LineString 4326, length_m, highway_type), GIST-indeksi,
+sekä skriptin upsert-logiikka. Aloita yhdellä pienellä alueella (esim. 3x3
+km). Näytä suunnitelma ja koodi, älä aja.
+
+Prompti 12: Kiinnitys ja oppiminen
+
+Migraatio 004: lisää sightings.edge_id. Taulu edge_flow(edge_id, direction
+'fwd'|'rev', count, primary key edge_id+direction). Trigger sightings-
+inserttiin: kiinnitä alkupiste lähimpään edgeen jos etäisyys <= 40 m
+(ST_DWithin + ORDER BY <->), päättele direction vertaamalla heading-arvoa
+edgen paikalliseen suuntaan kiinnityskohdassa, ja kasvata edge_flow.count.
+Jos tietä ei löydy, edge_id jää nulliksi ja havainto tallentuu silti.
+Lisää myös trigger, joka vähentää laskuria kun havainto poistetaan.
+
+Prompti 13: Ennustealgoritmi (TypeScript)
+
+Migraatio 005: RPC get_graph_around(lon, lat, radius_m) palauttaa lähialueen
+edges (id, from_node, to_node, geometry, length_m) ja edge_flow-laskurit.
+Tee src/lib/prediction/predict.ts: puhdas funktio predict(graph, start,
+heading, minutes) joka:
+1) kiinnittää alkupisteen edgeen ja valitsee suunnan headingin mukaan
+2) etenee 1,3 m/s ja jakaa todennäköisyyden risteyksissä pohjaohjeen kaavalla
+   (alpha=5, prior: suoraan painavin, U-käännös ~0 paitsi umpikujassa)
+3) katkaisee haaran kun P < 0,03
+4) palauttaa jokaiselle edgelle todennäköisyyden että koirakko kulkee sen läpi
+   sekä todennäköiset sijainnit hetkellä T (väli vauhdeilla 0,9-1,6 m/s)
+5) palauttaa lisäksi "dataQuality" (kuinka suuri osa jaoista perustui
+   oikeisiin laskureihin vs pelkkään prioriin)
+Kirjoita vitest-testit: yksinkertainen Y-risteys ilman dataa antaa prioriin
+perustuvan jaon; kun laskurit ovat 20 vs 0, jako painottuu selvästi; summa
+ei ylitä 1; umpikuja toimii.
+
+Prompti 14: Ennusteen UI
+
+Yhdistä predict() Ennuste-paneeliin: jos alkupiste on <= 40 m päässä tiestä
+ja graafi löytyy, hae get_graph_around (radius = minuutit*60*1,6 + 100 m),
+ajaa predict ja piirrä edget todennäköisyyden mukaan (väri/läpinäkyvyys),
+risteyksiin prosenttitekstit (esim. "50 %") ja T-hetken todennäköiset
+sijainnit korostettuna. Jos dataQuality on matala, näytä "Arvio, vähän
+dataa". Muuten käytä viuhkaa varavaihtoehtona.
+Vaihe D: Viimeistely
+
+Prompti 15: Ilmoitukset
+
+Lisää Web Push (toimii iOS 16.4+ vain kotinäytölle asennetussa PWA:ssa).
+Käyttäjä voi asettaa "oma lenkkialue" (piste + säde) ja tavalliset
+lenkkiajat. Supabase Edge Function + cron tarkistaa ennen aikoja
+heatmap-riskin ja lähettää ilmoituksen vain jos riski on korkea tai
+poikkeuksellisen matala ("Huomenna klo 7 rauhallista"). Pyydä
+ilmoituslupa vasta kun käyttäjä itse aktivoi toiminnon. Kerro selvästi
+että taustasijaintia ei seurata.
+
+Prompti 16: Yksityisyys ja tilin tallennus
+
+Lisää asetussivu: "Poista kaikki tietoni" (poistaa havainnot ja anonyymin
+tilin), tietosuojaseloste suomeksi (mitä kerätään, miksi, aggregointi,
+GDPR-oikeudet), ja vapaaehtoinen "Tallenna tilini" joka liittää anonyymin
+tilin sähköpostiin magic linkillä (supabase.auth.updateUser) säilyttäen
+user_id:n.
