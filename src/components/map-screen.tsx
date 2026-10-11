@@ -15,12 +15,9 @@ import {
   currentHourAnchor,
   FUTURE_HOUR_OFFSETS,
 } from "@/lib/time-window";
-import { createPredictionFan } from "@/lib/prediction/fan";
 
 const HELSINKI_CENTER: [number, number] = [24.9384, 60.1699];
 const DRAFT_SOURCE_ID = "sighting-draft";
-const PREDICTION_FAN_SOURCE_ID = "prediction-fan";
-const PREDICTION_FAN_LAYER_ID = "prediction-fan-fill";
 const OWN_SIGHTINGS_SOURCE_ID = "own-sightings";
 const COMMUNITY_SIGHTINGS_SOURCE_ID = "community-sightings";
 const COMMUNITY_HEATMAP_LAYER_ID = "community-sightings-heatmap";
@@ -78,11 +75,6 @@ type CommunityGridFeature = {
   id: string;
   geometry: { type: "Point"; coordinates: Coordinates };
   properties: { observation_count: number; heat_weight: number };
-};
-
-type SelectedPrediction = {
-  location: Coordinates;
-  heading: number;
 };
 
 function createSightingTimeFilter(weekday: number, hour: number) {
@@ -165,20 +157,8 @@ function setOwnSightingsData(map: MapLibreMap, features: OwnSightingFeature[]) {
   source?.setData({ type: "FeatureCollection", features });
 }
 
-function setPredictionFanData(
-  map: MapLibreMap,
-  feature: ReturnType<typeof createPredictionFan> | null,
-) {
-  const source = map.getSource(PREDICTION_FAN_SOURCE_ID) as GeoJSONSource | undefined;
-  source?.setData({
-    type: "FeatureCollection",
-    features: feature ? [feature] : [],
-  });
-}
-
 function createSightingPopup(
   properties: OwnSightingProperties,
-  onPredict: () => void,
   onDelete: () => Promise<void>,
 ): HTMLElement {
   const content = document.createElement("div");
@@ -209,13 +189,6 @@ function createSightingPopup(
     ? weather.join(" · ")
     : "Säätiedot eivät saatavilla";
   content.append(weatherLine);
-
-  const predictButton = document.createElement("button");
-  predictButton.className = "own-sighting-predict";
-  predictButton.type = "button";
-  predictButton.textContent = "Ennuste";
-  predictButton.addEventListener("click", onPredict);
-  content.append(predictButton);
 
   const deleteButton = document.createElement("button");
   deleteButton.className = "own-sighting-delete";
@@ -374,9 +347,6 @@ export function MapScreen() {
   const popupRef = useRef<Popup | null>(null);
   const maplibreRef = useRef<typeof import("maplibre-gl") | null>(null);
   const [isMapLoaded, setIsMapLoaded] = useState(false);
-  const [selectedPrediction, setSelectedPrediction] =
-    useState<SelectedPrediction | null>(null);
-  const [predictionMinutes, setPredictionMinutes] = useState(5);
   const [onlyOwnSightings, setOnlyOwnSightings] = useState(false);
   const [ownLayerMode, setOwnLayerMode] = useState<"arrows" | "heatmap">("arrows");
   const [ownSightings, setOwnSightings] = useState<OwnSightingFeature[]>([]);
@@ -568,20 +538,6 @@ export function MapScreen() {
               "fill-outline-color": "#ffffff",
             },
           });
-          loadedMap.addSource(PREDICTION_FAN_SOURCE_ID, {
-            type: "geojson",
-            data: { type: "FeatureCollection", features: [] },
-          });
-          loadedMap.addLayer({
-            id: PREDICTION_FAN_LAYER_ID,
-            type: "fill",
-            source: PREDICTION_FAN_SOURCE_ID,
-            paint: {
-              "fill-color": "#d9a83f",
-              "fill-opacity": 0.28,
-              "fill-outline-color": "#9a6a17",
-            },
-          });
           createOwnArrowImage(loadedMap);
           loadedMap.addSource(OWN_SIGHTINGS_SOURCE_ID, {
             type: "geojson",
@@ -729,7 +685,6 @@ export function MapScreen() {
               "icon-halo-width": 1.25,
             },
           });
-          loadedMap.moveLayer(PREDICTION_FAN_LAYER_ID, OWN_SIGHTINGS_LAYER_ID);
           loadedMap.on("click", OWN_SIGHTINGS_LAYER_ID, (event) => {
             if (isAddingSightingRef.current) {
               return;
@@ -763,18 +718,6 @@ export function MapScreen() {
               .setLngLat(event.lngLat)
               .setDOMContent(createSightingPopup(
                 properties,
-                () => {
-                  const feature = ownSightingsRef.current.find(
-                    (item) => item.properties.id === properties.id,
-                  );
-                  if (feature) {
-                    setSelectedPrediction({
-                      location: feature.geometry.coordinates,
-                      heading: properties.heading,
-                    });
-                    popupRef.current?.remove();
-                  }
-                },
                 async () => {
                   const { error } = await getSupabaseClient()
                     .from("sightings")
@@ -959,28 +902,6 @@ export function MapScreen() {
       );
     }
   }, [isMapLoaded, onlyOwnSightings, ownLayerMode]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-
-    if (!map || !isMapLoaded) {
-      return;
-    }
-
-    if (!selectedPrediction) {
-      setPredictionFanData(map, null);
-      return;
-    }
-
-    setPredictionFanData(
-      map,
-      createPredictionFan(
-        selectedPrediction.location,
-        selectedPrediction.heading,
-        predictionMinutes,
-      ),
-    );
-  }, [isMapLoaded, predictionMinutes, selectedPrediction]);
 
   useEffect(() => {
     timeFilterRef.current = { weekday: selectedWeekday, hour: selectedHour };
@@ -1485,35 +1406,6 @@ export function MapScreen() {
         <p aria-live="polite" className="map-draw-status" role="status">
           {isSaving ? drawingMessage : isDrawing ? "Piirretään nuolta..." : drawingMessage}
         </p>
-      )}
-
-      {selectedPrediction && (
-        <section aria-label="Ennuste" className="prediction-panel">
-          <div className="prediction-panel-header">
-            <h2>Ennuste</h2>
-            <button
-              aria-label="Sulje ennuste"
-              onClick={() => setSelectedPrediction(null)}
-              type="button"
-            >
-              Sulje
-            </button>
-          </div>
-          <p>Karkea arvio: ei tietoa reiteistä</p>
-          <label htmlFor="prediction-minutes">
-            Aika-arvio <output>{predictionMinutes} min</output>
-          </label>
-          <input
-            id="prediction-minutes"
-            aria-label="Ennusteen aika minuutteina"
-            max={10}
-            min={1}
-            onChange={(event) => setPredictionMinutes(Number(event.target.value))}
-            step={1}
-            type="range"
-            value={predictionMinutes}
-          />
-        </section>
       )}
 
       {locationMessage && (

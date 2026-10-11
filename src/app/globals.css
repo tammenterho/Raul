@@ -83,11 +83,11 @@ html {
   border-radius: 5px;
   color: #18392c;
   display: flex;
-  flex: 0 0 auto;
   font-size: 22px;
-  height: 40px;
   justify-content: center;
   margin-left: auto;
+  flex: 0 0 auto;
+  height: 40px;
   width: 40px;
 }
 
@@ -382,78 +382,6 @@ html {
   transform: translateX(-50%);
   width: calc(100vw - 24px);
   z-index: 4;
-}
-
-.prediction-panel {
-  background: rgb(255 255 255 / 97%);
-  border: 1px solid rgb(30 49 41 / 14%);
-  border-radius: 8px;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 148px);
-  box-shadow: 0 3px 20px rgb(11 26 19 / 22%);
-  color: #18392c;
-  left: 50%;
-  max-width: calc(100vw - 24px);
-  padding: 12px 14px;
-  position: absolute;
-  transform: translateX(-50%);
-  width: 360px;
-  z-index: 5;
-}
-
-.prediction-panel-header {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 5px;
-}
-
-.prediction-panel-header h2 {
-  font-size: 15px;
-  font-weight: 650;
-  margin: 0;
-}
-
-.prediction-panel-header button {
-  background: #edf3ef;
-  border: 1px solid #d2ded6;
-  border-radius: 5px;
-  color: #18392c;
-  font: 600 12px/1.2 var(--font-geist-sans), sans-serif;
-  min-height: 36px;
-  padding: 0 10px;
-}
-
-.prediction-panel p {
-  color: #586960;
-  font-size: 12px;
-  margin: 0 0 8px;
-}
-
-.prediction-panel label {
-  align-items: center;
-  display: flex;
-  font-size: 12px;
-  justify-content: space-between;
-}
-
-.prediction-panel label output {
-  font-variant-numeric: tabular-nums;
-  font-weight: 650;
-}
-
-.prediction-panel input {
-  accent-color: #b78324;
-  display: block;
-  height: 30px;
-  margin: 0;
-  touch-action: pan-y;
-  width: 100%;
-}
-
-.prediction-panel button:focus-visible,
-.prediction-panel input:focus-visible {
-  outline: 3px solid #277b5b;
-  outline-offset: 2px;
 }
 
 .map-time-control-header {
@@ -797,12 +725,6 @@ html {
     gap: 5px;
     padding: 7px 8px 6px;
     width: calc(100vw - 16px);
-  }
-
-  .prediction-panel {
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 140px);
-    padding: 10px 12px;
-    width: calc(100vw - 24px);
   }
 
   .map-time-control-header {
