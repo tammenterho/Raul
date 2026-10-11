@@ -1,0 +1,53 @@
+# Koirakartta
+
+Mobiilisti käytettävä PWA koirakkohavaintojen kirjaamiseen. Käyttäjä vetää
+sormella nuolen kartalle: alkupiste = missä koirakko nähtiin, suunta = mihin
+se käveli. Havainnoista muodostuu (1) yhteisön heatmap siitä, milloin ja missä
+koirakoita liikkuu, ja (2) ennuste siitä, minne koirakko todennäköisesti
+päätyy tie- ja polkuverkossa. Tarkoitus: reaktiivisten koirien omistajat
+välttävät kohtaamisia.
+
+## Pino
+- Next.js (App Router) + TypeScript + Tailwind, hostaus Vercelissä
+- Supabase: Postgres + PostGIS, Auth (anonymous sign-in), RLS
+- MapLibre GL JS + MapTiler-tiilet. EI Google Mapsia.
+- Open-Meteo sää (ei avainta)
+- OpenStreetMap-data (Overpass) tie- ja polkuverkolle
+- Vitest yksikkötesteille. Migraatiot: supabase/migrations/
+
+## Periaatteet
+- Mobiili ensin (iPhone Safari ja kotinäytölle asennettu PWA), isot
+  kosketusalueet, huomioi safe-area-insetit
+- UI-tekstit suomeksi, koodi ja kommentit englanniksi
+- Käyttäjä kirjautuu anonyymisti automaattisesti, ei lomakkeita
+- Kaikki taulut RLS:n alla. Älä koskaan käytä service role -avainta selaimessa.
+- Piirto toimii mihin tahansa, myös ilman tietä (pellot, metsät, puistot).
+  Havaintoa ei saa koskaan vaatia kiinnitettäväksi tiehen.
+- Yksityisyys: tarkat havainnot näkyvät vain omistajalleen. Yhteisönäkymä
+  käyttää vain aggregaatteja (~100 m ruudukko, min. 3 eri käyttäjää per ruutu).
+  Ei nimiä, ei kuvia, ei tunnistettavia tietoja.
+- Rehellisyys: jos dataa on vähän, UI sanoo sen ("arvio, vähän dataa").
+  Älä esitä todennäköisyyksiä varmoina äläkä arvaa tyhjästä.
+- Ajat tallennetaan timestamptz (UTC), esitys ja ryhmittely Europe/Helsinki.
+- Pidä komponentit pieninä. Client-komponentit vain karttaan ja kosketukseen.
+- Älä lisää kirjastoja ilman perustetta, selitä lyhyesti jos lisäät.
+- Älä aja migraatioita tai skriptejä itse: näytä SQL/koodi, minä ajan.
+- Salaisuudet vain ympäristömuuttujissa.
+
+## Tietomalli
+- sightings: id, user_id (default auth.uid()), seen_at, location
+  geography(Point,4326), heading (0-360), dog_count (1-3), off_leash (bool,
+  nullable), temperature_c, precipitation_mm, wind_ms, notes, created_at,
+  edge_id (nullable, kiinnitys tieverkkoon)
+- nodes, edges: OSM-tieverkko (edge = tienpätkä solmusta solmuun, geometry
+  LineString, length_m, highway_type)
+- edge_flow: edge_id, direction ('fwd'|'rev'), count. Kasvaa havainnoista.
+
+## Ennustelogiikka (ydinsäännöt)
+- Kävelyvauhti 1,3 m/s (epävarmuus: 0,9-1,6 m/s)
+- Risteyksessä jako: P(exit) = (n_exit + alpha*prior_exit) / (summa(n) + alpha),
+  alpha = 5. Prior: suoraan jatkaminen painavin, U-käännös ~0 (paitsi
+  umpikujassa), muut jakavat loput tasan.
+- Katkaise haara kun P < 0,03
+- Jos havainto ei ole lähellä tietä (> 40 m) tai verkkoa ei ole: käytä viuhkaa
+  (suunta ± 35°, pituus = aika * vauhti)
