@@ -259,10 +259,6 @@ html {
   min-width: 32px;
 }
 
-.own-heatmap-gradient-own {
-  background: linear-gradient(90deg, #1f6b62, #2f9e7c, #7dbb5a, #d8d95d);
-}
-
 .own-layer-error {
   border-top: 1px solid #e8c1b3;
   color: #762d1a;
@@ -271,60 +267,6 @@ html {
   margin: 0;
   max-width: 190px;
   padding: 8px 10px;
-}
-
-.own-sighting-popup {
-  color: #18392c;
-  font-family: var(--font-geist-sans), sans-serif;
-  font-size: 13px;
-  line-height: 1.45;
-  min-width: 190px;
-}
-
-.own-sighting-popup p {
-  margin: 0;
-}
-
-.own-sighting-popup p + p {
-  border-top: 1px solid #e5ebe7;
-  margin-top: 8px;
-  padding-top: 8px;
-}
-
-.own-sighting-popup-time {
-  font-size: 14px;
-  font-weight: 650;
-}
-
-.own-sighting-delete {
-  background: #923d27;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  color: #fff;
-  font: 600 13px/1.2 var(--font-geist-sans), sans-serif;
-  margin-top: 10px;
-  min-height: 40px;
-  width: 100%;
-}
-
-.own-sighting-delete:hover:not(:disabled) {
-  background: #7d321f;
-}
-
-.own-sighting-delete:focus-visible {
-  outline: 3px solid #277b5b;
-  outline-offset: 2px;
-}
-
-.own-sighting-delete:disabled {
-  cursor: wait;
-  opacity: 0.72;
-}
-
-.own-sighting-delete-error {
-  color: #762d1a;
-  font-size: 12px;
-  margin-top: 8px !important;
 }
 
 .map-add-button {

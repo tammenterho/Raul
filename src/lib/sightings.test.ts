@@ -2,7 +2,26 @@ import { describe, expect, it } from "vitest";
 import {
   calculateHeading,
   isSightingStrokeLongEnough,
+  parsePointLocation,
 } from "./sightings";
+
+describe("parsePointLocation", () => {
+  it("parses hex EWKB returned by PostgREST", () => {
+    const point = parsePointLocation("0101000020E610000010917EC371F13840486BF01A9F154E40");
+
+    expect(point?.[0]).toBeCloseTo(24.94, 1);
+    expect(point?.[1]).toBeCloseTo(60.17, 1);
+  });
+
+  it("parses WKT with and without SRID", () => {
+    expect(parsePointLocation("SRID=4326;POINT(24.9 60.1)")).toEqual([24.9, 60.1]);
+    expect(parsePointLocation("POINT(24.9 60.1)")).toEqual([24.9, 60.1]);
+  });
+
+  it("returns null for unsupported input", () => {
+    expect(parsePointLocation("not a point")).toBeNull();
+  });
+});
 
 describe("calculateHeading", () => {
   it("returns zero for a northbound line", () => {

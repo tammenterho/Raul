@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import type { GeoJSONSource, Map as MapLibreMap, Marker, Popup } from "maplibre-gl";
+import type { GeoJSONSource, Map as MapLibreMap, Marker } from "maplibre-gl";
 import {
   calculateHeading,
   isSightingStrokeLongEnough,
+  parsePointLocation,
   type Coordinates,
 } from "@/lib/sightings";
 import { getSupabaseClient } from "@/lib/supabase";
@@ -23,9 +24,8 @@ import {
 const HELSINKI_CENTER: [number, number] = [24.9384, 60.1699];
 const DRAFT_SOURCE_ID = "sighting-draft";
 const OWN_SIGHTINGS_SOURCE_ID = "own-sightings";
-const COMMUNITY_SIGHTINGS_SOURCE_ID = "community-sightings";
-const COMMUNITY_HEATMAP_LAYER_ID = "community-sightings-heatmap";
-const OWN_SIGHTINGS_HEATMAP_LAYER_ID = "own-sightings-heatmap";
+const HEATMAP_SOURCE_ID = "community-sightings";
+const HEATMAP_LAYER_ID = "community-sightings-heatmap";
 const OWN_SIGHTINGS_LAYER_ID = "own-sightings-arrows";
 const OWN_ARROW_IMAGE_ID = "own-sighting-arrow";
 
@@ -93,19 +93,6 @@ function createSightingTimeFilter(centerMinuteOfWeek: number) {
   ] as unknown as import("maplibre-gl").FilterSpecification;
 }
 
-function parsePointText(location: string): Coordinates | null {
-  const match = location.match(
-    /POINT\s*\(\s*(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\s+(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)/i,
-  );
-
-  if (!match) {
-    return null;
-  }
-
-  const coordinates: Coordinates = [Number(match[1]), Number(match[2])];
-  return coordinates.every(Number.isFinite) ? coordinates : null;
-}
-
 function createOwnSightingFeature(
   location: Coordinates,
   properties: Omit<OwnSightingProperties, "minute_of_week">,
@@ -155,68 +142,6 @@ function createOwnArrowImage(map: MapLibreMap) {
 function setOwnSightingsData(map: MapLibreMap, features: OwnSightingFeature[]) {
   const source = map.getSource(OWN_SIGHTINGS_SOURCE_ID) as GeoJSONSource | undefined;
   source?.setData({ type: "FeatureCollection", features });
-}
-
-function createSightingPopup(
-  properties: OwnSightingProperties,
-  onDelete: () => Promise<void>,
-): HTMLElement {
-  const content = document.createElement("div");
-  content.className = "own-sighting-popup";
-
-  const time = document.createElement("p");
-  time.className = "own-sighting-popup-time";
-  time.textContent = new Intl.DateTimeFormat("fi-FI", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "Europe/Helsinki",
-  }).format(new Date(properties.seen_at));
-  content.append(time);
-
-  const weather = [
-    properties.temperature_c === null
-      ? null
-      : `Lämpötila ${properties.temperature_c.toFixed(1)} °C`,
-    properties.precipitation_mm === null
-      ? null
-      : `Sade ${properties.precipitation_mm.toFixed(1)} mm`,
-    properties.wind_ms === null
-      ? null
-      : `Tuuli ${properties.wind_ms.toFixed(1)} m/s`,
-  ].filter((value): value is string => value !== null);
-  const weatherLine = document.createElement("p");
-  weatherLine.textContent = weather.length > 0
-    ? weather.join(" · ")
-    : "Säätiedot eivät saatavilla";
-  content.append(weatherLine);
-
-  const deleteButton = document.createElement("button");
-  deleteButton.className = "own-sighting-delete";
-  deleteButton.type = "button";
-  deleteButton.textContent = "Poista";
-  deleteButton.addEventListener("click", async () => {
-    deleteButton.disabled = true;
-    deleteButton.textContent = "Poistetaan...";
-
-    try {
-      await onDelete();
-    } catch (error) {
-      console.error("Sighting delete failed.", error);
-      deleteButton.disabled = false;
-      deleteButton.textContent = "Poista";
-      let errorMessage = content.querySelector(".own-sighting-delete-error");
-      if (!errorMessage) {
-        errorMessage = document.createElement("p");
-        errorMessage.className = "own-sighting-delete-error";
-        errorMessage.setAttribute("role", "alert");
-        content.append(errorMessage);
-      }
-      errorMessage.textContent = "Havaintoa ei voitu poistaa.";
-    }
-  });
-  content.append(deleteButton);
-
-  return content;
 }
 
 function setMapGesturesEnabled(map: MapLibreMap, enabled: boolean) {
@@ -344,7 +269,6 @@ export function MapScreen() {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markerRef = useRef<Marker | null>(null);
-  const popupRef = useRef<Popup | null>(null);
   const maplibreRef = useRef<typeof import("maplibre-gl") | null>(null);
   const [isMapLoaded, setIsMapLoaded] = useState(false);
   const [onlyOwnSightings, setOnlyOwnSightings] = useState(false);
@@ -355,6 +279,7 @@ export function MapScreen() {
   const [selectedOffset, setSelectedOffset] = useState(0);
   const [isTimePlaying, setIsTimePlaying] = useState(false);
   const [ownSightingsError, setOwnSightingsError] = useState<string | null>(null);
+  const [communityFeatures, setCommunityFeatures] = useState<CommunityGridFeature[]>([]);
   const [communityGridStatus, setCommunityGridStatus] = useState<
     "loading" | "empty" | "error" | null
   >(null);
@@ -370,7 +295,6 @@ export function MapScreen() {
   const [mapError, setMapError] = useState<string | null>(null);
   const [locationMessage, setLocationMessage] = useState<string | null>(null);
   const activePointerRef = useRef<{ pointerId: number; start: Coordinates } | null>(null);
-  const isAddingSightingRef = useRef(false);
   const isSavingRef = useRef(false);
   const ownSightingsRef = useRef<OwnSightingFeature[]>([]);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -542,14 +466,14 @@ export function MapScreen() {
             type: "geojson",
             data: { type: "FeatureCollection", features: [] },
           });
-          loadedMap.addSource(COMMUNITY_SIGHTINGS_SOURCE_ID, {
+          loadedMap.addSource(HEATMAP_SOURCE_ID, {
             type: "geojson",
             data: { type: "FeatureCollection", features: [] },
           });
           loadedMap.addLayer({
-            id: COMMUNITY_HEATMAP_LAYER_ID,
+            id: HEATMAP_LAYER_ID,
             type: "heatmap",
-            source: COMMUNITY_SIGHTINGS_SOURCE_ID,
+            source: HEATMAP_SOURCE_ID,
             paint: {
               "heatmap-weight": [
                 "interpolate",
@@ -606,53 +530,6 @@ export function MapScreen() {
           });
           const timeFilter = createSightingTimeFilter(timeFilterRef.current);
           loadedMap.addLayer({
-            id: OWN_SIGHTINGS_HEATMAP_LAYER_ID,
-            type: "heatmap",
-            source: OWN_SIGHTINGS_SOURCE_ID,
-            filter: timeFilter,
-            paint: {
-              "heatmap-weight": 1,
-              "heatmap-intensity": [
-                "interpolate",
-                ["linear"],
-                ["zoom"],
-                5,
-                0.7,
-                13,
-                1.8,
-                17,
-                2.5,
-              ],
-              "heatmap-radius": [
-                "interpolate",
-                ["linear"],
-                ["zoom"],
-                5,
-                8,
-                12,
-                24,
-                17,
-                38,
-              ],
-              "heatmap-opacity": 0.66,
-              "heatmap-color": [
-                "interpolate",
-                ["linear"],
-                ["heatmap-density"],
-                0,
-                "rgba(31, 107, 98, 0)",
-                0.2,
-                "#1f6b62",
-                0.42,
-                "#2f9e7c",
-                0.68,
-                "#7dbb5a",
-                1,
-                "#d8d95d",
-              ],
-            },
-          });
-          loadedMap.addLayer({
             id: OWN_SIGHTINGS_LAYER_ID,
             type: "symbol",
             source: OWN_SIGHTINGS_SOURCE_ID,
@@ -681,73 +558,6 @@ export function MapScreen() {
               "icon-halo-width": 1.25,
             },
           });
-          loadedMap.on("click", OWN_SIGHTINGS_LAYER_ID, (event) => {
-            if (isAddingSightingRef.current) {
-              return;
-            }
-
-            const raw = event.features?.[0]?.properties;
-            if (!raw) return;
-
-            const properties: OwnSightingProperties = {
-              id: String(raw.id),
-              seen_at: String(raw.seen_at),
-              heading: Number(raw.heading),
-              temperature_c: raw.temperature_c == null
-                ? null
-                : Number(raw.temperature_c),
-              precipitation_mm: raw.precipitation_mm == null
-                ? null
-                : Number(raw.precipitation_mm),
-              wind_ms: raw.wind_ms == null ? null : Number(raw.wind_ms),
-              minute_of_week: Number(raw.minute_of_week),
-            };
-
-            popupRef.current?.remove();
-            popupRef.current = new maplibregl.Popup({
-              closeButton: true,
-              closeOnClick: true,
-              offset: 16,
-              maxWidth: "300px",
-            })
-              .setLngLat(event.lngLat)
-              .setDOMContent(createSightingPopup(
-                properties,
-                async () => {
-                  const { error } = await getSupabaseClient()
-                    .from("sightings")
-                    .delete()
-                    .eq("id", properties.id);
-
-                  if (error) {
-                    throw error;
-                  }
-
-                  ownSightingsRef.current = ownSightingsRef.current.filter(
-                    (feature) => feature.properties.id !== properties.id,
-                  );
-                  setOwnSightings(ownSightingsRef.current);
-                  setOwnSightingsCount(ownSightingsRef.current.length);
-                  setOwnSightingsData(loadedMap, ownSightingsRef.current);
-
-                  if (undoTimerRef.current && undoSightingRef.current === properties.id) {
-                    clearTimeout(undoTimerRef.current);
-                    undoTimerRef.current = null;
-                    undoSightingRef.current = null;
-                    setUndoSighting(null);
-                  }
-
-                  popupRef.current?.remove();
-                },
-              ))
-              .addTo(loadedMap);
-          });
-          loadedMap.on("mouseenter", OWN_SIGHTINGS_LAYER_ID, () => {
-            loadedMap.getCanvas().style.cursor = "pointer";
-          });
-          loadedMap.on("mouseleave", OWN_SIGHTINGS_LAYER_ID, () => {
-            loadedMap.getCanvas().style.cursor = "";
-          });
           hasLoaded = true;
           if (!isCancelled) {
             setIsMapLoaded(true);
@@ -774,8 +584,6 @@ export function MapScreen() {
       if (undoTimerRef.current) {
         clearTimeout(undoTimerRef.current);
       }
-      popupRef.current?.remove();
-      popupRef.current = null;
       markerRef.current?.remove();
       markerRef.current = null;
       map?.remove();
@@ -824,7 +632,7 @@ export function MapScreen() {
         }
 
         const features = rows.flatMap((row) => {
-          const location = parsePointText(row.location_text);
+          const location = parsePointLocation(row.location_text);
           const heading = Number(row.heading);
 
           if (!location || !Number.isFinite(heading)) {
@@ -881,14 +689,9 @@ export function MapScreen() {
 
     if (map && isMapLoaded && map.getLayer(OWN_SIGHTINGS_LAYER_ID)) {
       map.setLayoutProperty(
-        COMMUNITY_HEATMAP_LAYER_ID,
+        HEATMAP_LAYER_ID,
         "visibility",
-        onlyOwnSightings ? "none" : "visible",
-      );
-      map.setLayoutProperty(
-        OWN_SIGHTINGS_HEATMAP_LAYER_ID,
-        "visibility",
-        ownLayerMode === "heatmap" ? "visible" : "none",
+        !onlyOwnSightings || ownLayerMode === "heatmap" ? "visible" : "none",
       );
       map.setLayoutProperty(
         OWN_SIGHTINGS_LAYER_ID,
@@ -904,10 +707,35 @@ export function MapScreen() {
 
     if (map && isMapLoaded) {
       const filter = createSightingTimeFilter(selectedMinute);
-      map.setFilter(OWN_SIGHTINGS_HEATMAP_LAYER_ID, filter);
       map.setFilter(OWN_SIGHTINGS_LAYER_ID, filter);
     }
   }, [isMapLoaded, selectedMinute]);
+
+  useEffect(() => {
+    const source = mapRef.current?.getSource(HEATMAP_SOURCE_ID) as
+      | GeoJSONSource
+      | undefined;
+
+    if (!source || !isMapLoaded) {
+      return;
+    }
+
+    const ownHeatFeatures: CommunityGridFeature[] = ownSightings
+      .filter((feature) => isWithinWindow(feature.properties.minute_of_week, selectedMinute))
+      .map((feature) => ({
+        type: "Feature",
+        id: `own:${feature.properties.id}`,
+        geometry: feature.geometry,
+        properties: { observation_count: 1, heat_weight: 1 },
+      }));
+
+    source.setData({
+      type: "FeatureCollection",
+      features: onlyOwnSightings
+        ? ownHeatFeatures
+        : [...communityFeatures, ...ownHeatFeatures],
+    });
+  }, [isMapLoaded, communityFeatures, ownSightings, selectedMinute, onlyOwnSightings]);
 
   useEffect(() => {
     if (isMapLoaded) {
@@ -936,11 +764,8 @@ export function MapScreen() {
     async function loadCommunityGrid() {
       const currentRequestId = ++requestId;
       const bounds = activeMap.getBounds();
-      const source = activeMap.getSource(COMMUNITY_SIGHTINGS_SOURCE_ID) as
-        | GeoJSONSource
-        | undefined;
 
-      source?.setData({ type: "FeatureCollection", features: [] });
+      setCommunityFeatures([]);
       setCommunityGridStatus("loading");
 
       try {
@@ -975,7 +800,7 @@ export function MapScreen() {
           },
         }));
 
-        source?.setData({ type: "FeatureCollection", features });
+        setCommunityFeatures(features);
         setCommunityGridStatus(features.length === 0 ? "empty" : null);
       } catch (error) {
         console.error("Community heatmap could not be loaded.", error);
@@ -1140,7 +965,6 @@ export function MapScreen() {
     }
 
     activePointerRef.current = null;
-    isAddingSightingRef.current = false;
     setIsDrawing(false);
     setIsAddingSighting(false);
     isSavingRef.current = false;
@@ -1162,7 +986,6 @@ export function MapScreen() {
     }
 
     setIsAddingSighting(true);
-    isAddingSightingRef.current = true;
     setDrawingMessage("Vedä nuoli kartalle");
   }
 
@@ -1215,7 +1038,10 @@ export function MapScreen() {
     ownSightingsCount !== null &&
     !hasOwnSightingsForSelectedTime;
   const showCommunityEmptyState =
-    !onlyOwnSightings && !isAddingSighting && communityGridStatus === "empty";
+    !onlyOwnSightings &&
+    !isAddingSighting &&
+    communityGridStatus === "empty" &&
+    !hasOwnSightingsForSelectedTime;
   const showCommunityError =
     !onlyOwnSightings && !isAddingSighting && communityGridStatus === "error";
   const hasCenterNotice =
@@ -1274,23 +1100,13 @@ export function MapScreen() {
             </button>
           </div>
         )}
-        {!onlyOwnSightings && !isAddingSighting && (
+        {ownLayerMode === "heatmap" && !isAddingSighting && (
           <div
-            aria-label="Yhteisöhavaintoja: harvaa vasemmalla, vilkasta oikealla"
+            aria-label="Havaintoja: harvaa vasemmalla, vilkasta oikealla"
             className="own-layer-legend"
           >
             <span>Harvaa</span>
             <i aria-hidden="true" className="own-heatmap-gradient" />
-            <span>Vilkasta</span>
-          </div>
-        )}
-        {ownLayerMode === "heatmap" && !isAddingSighting && (
-          <div
-            aria-label="Omia havaintoja: harvaa vasemmalla, vilkasta oikealla"
-            className="own-layer-legend"
-          >
-            <span>Harvaa</span>
-            <i aria-hidden="true" className="own-heatmap-gradient own-heatmap-gradient-own" />
             <span>Vilkasta</span>
           </div>
         )}
@@ -1371,7 +1187,7 @@ export function MapScreen() {
           {showCommunityEmptyState && (
             <p className="community-grid-status" role="status">
               Ei yhteisöhavaintoja tällä ajalla
-              <span>Vähintään 3 käyttäjää / ruutu</span>
+              <span>Vähintään 2 käyttäjää / ruutu</span>
             </p>
           )}
           {showCommunityError && (

@@ -46,7 +46,7 @@ Tieverkkoon perustuvat ennusteet ovat tuleva vaihe, eivät nykyinen toiminto.
 - Kaikki havainnot painavat yhtä paljon: yksi viiva = yksi havainto,
   koirien määrää ei tallenneta.
 - Yhteisön heatmap tulee `get_sighting_grid`-RPC:stä. Se palauttaa vain noin
-  100 m ruutuaggregaatit, joissa on havaintoja vähintään kolmelta käyttäjältä.
+  100 m ruutuaggregaatit, joissa on havaintoja vähintään kahdelta käyttäjältä.
   Käyttäjän omat rivit ovat erillinen RLS-suojattu kerros.
 
 ## Nykyinen toteutus
@@ -55,7 +55,7 @@ Tieverkkoon perustuvat ennusteet ovat tuleva vaihe, eivät nykyinen toiminto.
   sää haetaan Open-Meteosta kahden sekunnin aikakatkaisulla.
 - Oman käyttäjän nuolet ja oma heatmap; popup näyttää ajan ja sään, ja havainto
   voidaan poistaa. Yhteisöheatmap käyttää `get_sighting_grid`-RPC:tä ja näyttää
-  vain ruudut, joissa on vähintään kolme eri käyttäjää.
+  vain ruudut, joissa on vähintään kaksi eri käyttäjää.
 - Tuntiaikajana näyttää seuraavat 24 tuntia ja hakee vertailun historiallisista
   havainnoista valitulle viikonpäivälle ja tunnille.
 - PWA-manifesti, standalone-näkymä ja iOS Safarin asennusbanneri.
