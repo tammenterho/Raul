@@ -12,8 +12,12 @@ import { fetchWeather } from "@/lib/weather";
 import { useAuth } from "@/components/auth-provider";
 import {
   createHelsinkiTimeWindow,
-  currentHourAnchor,
+  currentTimeAnchor,
   FUTURE_HOUR_OFFSETS,
+  helsinkiMinuteOfWeek,
+  isWithinWindow,
+  MINUTES_PER_WEEK,
+  WINDOW_HALF_MINUTES,
 } from "@/lib/time-window";
 
 const HELSINKI_CENTER: [number, number] = [24.9384, 60.1699];
@@ -42,8 +46,7 @@ type OwnSightingProperties = {
   temperature_c: number | null;
   precipitation_mm: number | null;
   wind_ms: number | null;
-  hour: number;
-  weekday: number;
+  minute_of_week: number;
 };
 
 type OwnSightingFeature = {
@@ -77,17 +80,17 @@ type CommunityGridFeature = {
   properties: { observation_count: number; heat_weight: number };
 };
 
-function createSightingTimeFilter(weekday: number, hour: number) {
-  const filter: [
-    "all",
-    ["==", ["get", string], number],
-    ["==", ["get", string], number],
-  ] = [
-    "all",
-    ["==", ["get", "weekday"], weekday],
-    ["==", ["get", "hour"], hour],
+function createSightingTimeFilter(centerMinuteOfWeek: number) {
+  const distance = [
+    "abs",
+    ["-", ["get", "minute_of_week"], centerMinuteOfWeek],
   ];
-  return filter;
+  // Viikon ympäri kiertävä etäisyys: d <= puoli-ikkuna tai d >= viikko - puoli-ikkuna.
+  return [
+    "any",
+    ["<=", distance, WINDOW_HALF_MINUTES],
+    [">=", distance, MINUTES_PER_WEEK - WINDOW_HALF_MINUTES],
+  ] as unknown as import("maplibre-gl").FilterSpecification;
 }
 
 function parsePointText(location: string): Coordinates | null {
@@ -105,18 +108,15 @@ function parsePointText(location: string): Coordinates | null {
 
 function createOwnSightingFeature(
   location: Coordinates,
-  properties: Omit<OwnSightingProperties, "hour" | "weekday">,
+  properties: Omit<OwnSightingProperties, "minute_of_week">,
 ): OwnSightingFeature {
-  const timeWindow = createHelsinkiTimeWindow(Date.parse(properties.seen_at), 0);
-
   return {
     type: "Feature",
     id: properties.id,
     geometry: { type: "Point", coordinates: location },
     properties: {
       ...properties,
-      hour: timeWindow.hour,
-      weekday: timeWindow.weekday,
+      minute_of_week: helsinkiMinuteOfWeek(Date.parse(properties.seen_at)),
     },
   };
 }
@@ -351,7 +351,7 @@ export function MapScreen() {
   const [ownLayerMode, setOwnLayerMode] = useState<"arrows" | "heatmap">("arrows");
   const [ownSightings, setOwnSightings] = useState<OwnSightingFeature[]>([]);
   const [ownSightingsCount, setOwnSightingsCount] = useState<number | null>(null);
-  const [timelineAnchor, setTimelineAnchor] = useState(() => currentHourAnchor(Date.now()));
+  const [timelineAnchor, setTimelineAnchor] = useState(() => currentTimeAnchor(Date.now()));
   const [selectedOffset, setSelectedOffset] = useState(0);
   const [isTimePlaying, setIsTimePlaying] = useState(false);
   const [ownSightingsError, setOwnSightingsError] = useState<string | null>(null);
@@ -376,9 +376,8 @@ export function MapScreen() {
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoSightingRef = useRef<string | null>(null);
   const selectedTimeWindow = createHelsinkiTimeWindow(timelineAnchor, selectedOffset);
-  const selectedHour = selectedTimeWindow.hour;
-  const selectedWeekday = selectedTimeWindow.weekday;
-  const timeFilterRef = useRef({ weekday: selectedWeekday, hour: selectedHour });
+  const selectedMinute = selectedTimeWindow.minuteOfWeek;
+  const timeFilterRef = useRef(selectedMinute);
 
   const advanceTimeline = useEffectEvent(() => {
     if (selectedOffset >= FUTURE_HOUR_OFFSETS) {
@@ -605,10 +604,7 @@ export function MapScreen() {
               ],
             },
           });
-          const timeFilter = createSightingTimeFilter(
-            timeFilterRef.current.weekday,
-            timeFilterRef.current.hour,
-          );
+          const timeFilter = createSightingTimeFilter(timeFilterRef.current);
           loadedMap.addLayer({
             id: OWN_SIGHTINGS_HEATMAP_LAYER_ID,
             type: "heatmap",
@@ -704,8 +700,7 @@ export function MapScreen() {
                 ? null
                 : Number(raw.precipitation_mm),
               wind_ms: raw.wind_ms == null ? null : Number(raw.wind_ms),
-              hour: Number(raw.hour),
-              weekday: Number(raw.weekday),
+              minute_of_week: Number(raw.minute_of_week),
             };
 
             popupRef.current?.remove();
@@ -904,15 +899,15 @@ export function MapScreen() {
   }, [isMapLoaded, onlyOwnSightings, ownLayerMode]);
 
   useEffect(() => {
-    timeFilterRef.current = { weekday: selectedWeekday, hour: selectedHour };
+    timeFilterRef.current = selectedMinute;
     const map = mapRef.current;
 
     if (map && isMapLoaded) {
-      const filter = createSightingTimeFilter(selectedWeekday, selectedHour);
+      const filter = createSightingTimeFilter(selectedMinute);
       map.setFilter(OWN_SIGHTINGS_HEATMAP_LAYER_ID, filter);
       map.setFilter(OWN_SIGHTINGS_LAYER_ID, filter);
     }
-  }, [isMapLoaded, selectedHour, selectedWeekday]);
+  }, [isMapLoaded, selectedMinute]);
 
   useEffect(() => {
     if (isMapLoaded) {
@@ -950,9 +945,8 @@ export function MapScreen() {
 
       try {
         const { data, error } = await getSupabaseClient().rpc("get_sighting_grid", {
-          weekday: selectedWeekday,
-          hour_from: selectedHour,
-          hour_to: selectedHour + 1,
+          center_minute: selectedMinute,
+          half_window_minutes: WINDOW_HALF_MINUTES,
           min_lon: bounds.getWest(),
           min_lat: bounds.getSouth(),
           max_lon: bounds.getEast(),
@@ -1009,7 +1003,7 @@ export function MapScreen() {
       }
       activeMap.off("moveend", scheduleCommunityGrid);
     };
-  }, [isMapLoaded, selectedHour, selectedWeekday]);
+  }, [isMapLoaded, selectedMinute]);
 
   useEffect(() => {
     if (!isTimePlaying) {
@@ -1213,9 +1207,7 @@ export function MapScreen() {
   }
 
   const hasOwnSightingsForSelectedTime = ownSightings.some(
-    (feature) =>
-      feature.properties.weekday === selectedWeekday &&
-      feature.properties.hour === selectedHour,
+    (feature) => isWithinWindow(feature.properties.minute_of_week, selectedMinute),
   );
   const showOwnEmptyState =
     onlyOwnSightings &&
@@ -1310,21 +1302,6 @@ export function MapScreen() {
       <section aria-label="Havaintojen aikajana" className="map-time-control">
         <div className="map-time-control-header">
           <button
-            className="map-add-button"
-            aria-pressed={isAddingSighting}
-            disabled={!isMapLoaded || isSaving}
-            onClick={toggleSightingMode}
-            type="button"
-          >
-            {isAddingSighting ? "Lopeta havaintotila" : "Lisää havainto"}
-          </button>
-          <div className="map-time-readout">
-            <span>Historiallinen vertailu</span>
-            <output aria-live="polite">
-              {selectedTimeWindow.startLabel}–{selectedTimeWindow.endLabel}
-            </output>
-          </div>
-          <button
             aria-label={isTimePlaying ? "Pysäytä tuntien selaus" : "Toista tunnit"}
             className="map-time-play"
             disabled={!isMapLoaded}
@@ -1334,6 +1311,22 @@ export function MapScreen() {
           >
             <span aria-hidden="true">{isTimePlaying ? "Ⅱ" : "▶"}</span>
           </button>
+          <div className="map-time-readout">
+            <output aria-live="polite">
+              {selectedTimeWindow.startLabel}
+              <span className="map-time-dash">–</span>
+              {selectedTimeWindow.endLabel}
+            </output>
+          </div>
+          <button
+            className="map-add-button"
+            aria-pressed={isAddingSighting}
+            disabled={!isMapLoaded || isSaving}
+            onClick={toggleSightingMode}
+            type="button"
+          >
+            {isAddingSighting ? "Lopeta havaintotila" : "Lisää havainto"}
+          </button>
         </div>
         <div className="map-time-slider-row">
           <button
@@ -1341,7 +1334,7 @@ export function MapScreen() {
             className="map-time-now"
             disabled={!isMapLoaded}
             onClick={() => {
-              setTimelineAnchor(currentHourAnchor(Date.now()));
+              setTimelineAnchor(currentTimeAnchor(Date.now()));
               setSelectedOffset(0);
               setIsTimePlaying(false);
             }}

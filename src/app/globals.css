@@ -388,7 +388,7 @@ html {
   align-items: center;
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr) 44px;
+  grid-template-columns: 44px minmax(0, 1fr) minmax(0, auto);
 }
 
 .map-time-readout {
@@ -403,6 +403,12 @@ html {
   color: #506158;
   font-size: 11px;
   white-space: nowrap;
+}
+
+.map-time-readout output .map-time-dash {
+  color: inherit;
+  font-size: inherit;
+  margin: 0 0.4em;
 }
 
 .map-time-readout output {
@@ -487,7 +493,7 @@ html {
 
 @media (max-width: 480px) {
   .map-time-control-header {
-    grid-template-columns: minmax(0, auto) minmax(0, 1fr) 44px;
+    grid-template-columns: 44px minmax(0, 1fr) minmax(0, auto);
   }
 
   .map-time-readout {
@@ -729,7 +735,7 @@ html {
 
   .map-time-control-header {
     gap: 6px;
-    grid-template-columns: minmax(0, 1fr) minmax(0, auto) 38px;
+    grid-template-columns: 38px minmax(0, auto) minmax(0, 1fr);
   }
 
   .map-time-readout {

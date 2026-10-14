@@ -1,27 +1,34 @@
 import { describe, expect, it } from "vitest";
 import {
   createHelsinkiTimeWindow,
+  currentTimeAnchor,
   FUTURE_HOUR_OFFSETS,
-  currentHourAnchor,
+  helsinkiMinuteOfWeek,
+  isWithinWindow,
 } from "./time-window";
 
 describe("Helsinki time window", () => {
-  it("starts from the current hour and keeps earlier hours out of range", () => {
-    const now = Date.parse("2026-10-11T20:42:00Z");
-    const anchor = currentHourAnchor(now);
+  it("centers the window on the current time rounded to 5 minutes", () => {
+    const now = Date.parse("2026-10-11T10:11:00Z");
+    const anchor = currentTimeAnchor(now);
 
-    expect(anchor).toBe(Date.parse("2026-10-11T20:00:00Z"));
-    expect(createHelsinkiTimeWindow(anchor, 0)).toMatchObject({ weekday: 0, hour: 23 });
+    expect(anchor).toBe(Date.parse("2026-10-11T10:10:00Z"));
+    const window = createHelsinkiTimeWindow(anchor, 0);
+    expect(window.startLabel).toContain("12.40");
+    expect(window.endLabel).toContain("13.40");
   });
 
-  it("moves weekday forward when the rolling window crosses midnight", () => {
-    const window = createHelsinkiTimeWindow(
-      Date.parse("2026-10-11T20:00:00Z"),
-      1,
-    );
+  it("computes the Helsinki minute of the week", () => {
+    // Sunday 2026-10-11 13:10 Helsinki (UTC+3)
+    expect(helsinkiMinuteOfWeek(Date.parse("2026-10-11T10:10:00Z"))).toBe(13 * 60 + 10);
+    // Monday 00:15 Helsinki
+    expect(helsinkiMinuteOfWeek(Date.parse("2026-10-11T21:15:00Z"))).toBe(1440 + 15);
+  });
 
-    expect(window).toMatchObject({ weekday: 1, hour: 0 });
-    expect(window.startLabel).toContain("ma");
+  it("matches sightings within 30 minutes and wraps around the week", () => {
+    expect(isWithinWindow(13 * 60, 13 * 60 + 30)).toBe(true);
+    expect(isWithinWindow(13 * 60, 13 * 60 + 31)).toBe(false);
+    expect(isWithinWindow(10079, 10)).toBe(true);
   });
 
   it("allows only the next 24 hourly slots", () => {
