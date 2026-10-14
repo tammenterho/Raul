@@ -23,6 +23,9 @@ import {
 
 const HELSINKI_CENTER: [number, number] = [24.9384, 60.1699];
 const DRAFT_SOURCE_ID = "sighting-draft";
+const PULSE_SOURCE_ID = "sighting-pulse";
+const PULSE_LAYER_ID = "sighting-pulse-ring";
+const PULSE_DURATION_MS = 650;
 const OWN_SIGHTINGS_SOURCE_ID = "own-sightings";
 const HEATMAP_SOURCE_ID = "community-sightings";
 const HEATMAP_LAYER_ID = "community-sightings-heatmap";
@@ -173,8 +176,8 @@ function createArrowFeatures(map: MapLibreMap, arrow: ArrowPath) {
   const lineLength = Math.hypot(deltaX, deltaY);
   const unitX = lineLength === 0 ? 0 : deltaX / lineLength;
   const unitY = lineLength === 0 ? 0 : deltaY / lineLength;
-  const headLength = Math.min(22, lineLength * 0.45);
-  const headWidth = Math.min(18, lineLength * 0.4);
+  const headLength = Math.min(26, lineLength * 0.45);
+  const headWidth = Math.min(22, lineLength * 0.42);
   const baseX = endPoint.x - unitX * headLength;
   const baseY = endPoint.y - unitY * headLength;
   const perpendicularX = -unitY;
@@ -189,6 +192,11 @@ function createArrowFeatures(map: MapLibreMap, arrow: ArrowPath) {
   ]);
 
   return [
+      {
+        type: "Feature" as const,
+        properties: { kind: "start" as const, arrowId: arrow.id },
+        geometry: { type: "Point" as const, coordinates: arrow.start },
+      },
       {
         type: "Feature" as const,
         properties: { kind: "line" as const, arrowId: arrow.id },
@@ -216,6 +224,37 @@ function renderArrowLayer(map: MapLibreMap, arrows: ArrowPath[]) {
     type: "FeatureCollection",
     features: arrows.flatMap((arrow) => createArrowFeatures(map, arrow)),
   });
+}
+
+function playReleasePulse(map: MapLibreMap, center: Coordinates) {
+  const source = map.getSource(PULSE_SOURCE_ID) as GeoJSONSource | undefined;
+  source?.setData({
+    type: "FeatureCollection",
+    features: [{ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: center } }],
+  });
+  const startedAt = performance.now();
+
+  function frame(now: number) {
+    const progress = Math.min(1, (now - startedAt) / PULSE_DURATION_MS);
+    const eased = 1 - (1 - progress) ** 3;
+
+    // Kartta voi poistua kesken animaation.
+    try {
+      map.setPaintProperty(PULSE_LAYER_ID, "circle-radius", 8 + eased * 40);
+      map.setPaintProperty(PULSE_LAYER_ID, "circle-opacity", 0.35 * (1 - progress) ** 3);
+      map.setPaintProperty(PULSE_LAYER_ID, "circle-stroke-opacity", 0.85 * (1 - progress) ** 3);
+
+      if (progress < 1) {
+        requestAnimationFrame(frame);
+      } else {
+        source?.setData({ type: "FeatureCollection", features: [] });
+      }
+    } catch {
+      return;
+    }
+  }
+
+  requestAnimationFrame(frame);
 }
 
 function requestUserLocation(
@@ -437,6 +476,10 @@ export function MapScreen() {
             type: "geojson",
             data: { type: "FeatureCollection", features: [] },
           });
+          loadedMap.addSource(PULSE_SOURCE_ID, {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
           loadedMap.addLayer({
             id: "sighting-draft-line",
             type: "line",
@@ -448,7 +491,7 @@ export function MapScreen() {
             },
             paint: {
               "line-color": "#dc5b35",
-              "line-width": 4,
+              "line-width": 5,
             },
           });
           loadedMap.addLayer({
@@ -458,7 +501,31 @@ export function MapScreen() {
             filter: ["==", ["get", "kind"], "arrow"],
             paint: {
               "fill-color": "#dc5b35",
-              "fill-outline-color": "#ffffff",
+            },
+          });
+          loadedMap.addLayer({
+            id: "sighting-draft-start",
+            type: "circle",
+            source: DRAFT_SOURCE_ID,
+            filter: ["==", ["get", "kind"], "start"],
+            paint: {
+              "circle-color": "#000000",
+              "circle-radius": 6,
+              "circle-stroke-color": "#ffffff",
+              "circle-stroke-width": 2.5,
+            },
+          });
+          loadedMap.addLayer({
+            id: PULSE_LAYER_ID,
+            type: "circle",
+            source: PULSE_SOURCE_ID,
+            paint: {
+              "circle-color": "#00fa8e",
+              "circle-opacity": 0,
+              "circle-radius": 8,
+              "circle-stroke-color": "#00fa8e",
+              "circle-stroke-opacity": 0,
+              "circle-stroke-width": 2.5,
             },
           });
           createOwnArrowImage(loadedMap);
@@ -720,14 +787,17 @@ export function MapScreen() {
       return;
     }
 
-    const ownHeatFeatures: CommunityGridFeature[] = ownSightings
-      .filter((feature) => isWithinWindow(feature.properties.minute_of_week, selectedMinute))
-      .map((feature) => ({
-        type: "Feature",
-        id: `own:${feature.properties.id}`,
-        geometry: feature.geometry,
-        properties: { observation_count: 1, heat_weight: 1 },
-      }));
+    // Nuolitilassa omat havainnot näkyvät vain nuolina, ei heatmapin hehkuna.
+    const ownHeatFeatures: CommunityGridFeature[] = ownLayerMode === "heatmap"
+      ? ownSightings
+        .filter((feature) => isWithinWindow(feature.properties.minute_of_week, selectedMinute))
+        .map((feature) => ({
+          type: "Feature",
+          id: `own:${feature.properties.id}`,
+          geometry: feature.geometry,
+          properties: { observation_count: 1, heat_weight: 1 },
+        }))
+      : [];
 
     source.setData({
       type: "FeatureCollection",
@@ -735,7 +805,7 @@ export function MapScreen() {
         ? ownHeatFeatures
         : [...communityFeatures, ...ownHeatFeatures],
     });
-  }, [isMapLoaded, communityFeatures, ownSightings, selectedMinute, onlyOwnSightings]);
+  }, [isMapLoaded, communityFeatures, ownSightings, selectedMinute, onlyOwnSightings, ownLayerMode]);
 
   useEffect(() => {
     if (isMapLoaded) {
@@ -922,6 +992,7 @@ export function MapScreen() {
         end,
       };
       renderArrowLayer(activeMap, [drawn]);
+      playReleasePulse(activeMap, activePointer.start);
       void saveSighting(drawn);
     }
 

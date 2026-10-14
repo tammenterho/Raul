@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AuthProvider } from "@/components/auth-provider";
-import { IOSInstallBanner } from "@/components/ios-install-banner";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./globals.css";
 
@@ -47,7 +46,6 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col">
         <AuthProvider>
           {children}
-          <IOSInstallBanner />
         </AuthProvider>
       </body>
     </html>
