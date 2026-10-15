@@ -27,6 +27,7 @@ const DRAFT_SOURCE_ID = "sighting-draft";
 const PULSE_SOURCE_ID = "sighting-pulse";
 const PULSE_LAYER_ID = "sighting-pulse-ring";
 const PULSE_DURATION_MS = 650;
+const HALF_HOUR_MS = 30 * 60 * 1000;
 const OWN_SIGHTINGS_SOURCE_ID = "own-sightings";
 const HEATMAP_SOURCE_ID = "community-sightings";
 const HEATMAP_LAYER_ID = "community-sightings-heatmap";
@@ -38,6 +39,19 @@ type ArrowPath = {
   start: Coordinates;
   end: Coordinates;
 };
+
+type DraftTimeOverlay = {
+  x: number;
+  y: number;
+  label: string;
+};
+
+const sightingTimeFormatter = new Intl.DateTimeFormat("fi-FI", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+  timeZone: "Europe/Helsinki",
+});
 
 type SavedSighting = {
   databaseId: string;
@@ -334,7 +348,12 @@ export function MapScreen() {
   const [undoError, setUndoError] = useState<string | null>(null);
   const [mapError, setMapError] = useState<string | null>(null);
   const [locationMessage, setLocationMessage] = useState<string | null>(null);
-  const activePointerRef = useRef<{ pointerId: number; start: Coordinates } | null>(null);
+  const [draftTimeOverlay, setDraftTimeOverlay] = useState<DraftTimeOverlay | null>(null);
+  const activePointerRef = useRef<{
+    pointerId: number;
+    start: Coordinates;
+    seenAtMs: number;
+  } | null>(null);
   const isSavingRef = useRef(false);
   const ownSightingsRef = useRef<OwnSightingFeature[]>([]);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -342,6 +361,11 @@ export function MapScreen() {
   const selectedTimeWindow = createHelsinkiTimeWindow(timelineAnchor, selectedOffset);
   const selectedMinute = selectedTimeWindow.minuteOfWeek;
   const timeFilterRef = useRef(selectedMinute);
+  const getSightingTimestamp = useEffectEvent(() => {
+    const nowMs = Date.now();
+    setTimelineAnchor(nowMs);
+    return nowMs + selectedOffset * HALF_HOUR_MS;
+  });
 
   const advanceTimeline = useEffectEvent(() => {
     if (selectedOffset >= MAX_HALF_HOUR_OFFSET) {
@@ -352,7 +376,7 @@ export function MapScreen() {
     setSelectedOffset(selectedOffset + 1);
   });
 
-  const saveSighting = useEffectEvent(async (drawnSighting: ArrowPath) => {
+  const saveSighting = useEffectEvent(async (drawnSighting: ArrowPath, seenAtMs: number) => {
     if (isSavingRef.current) {
       return;
     }
@@ -367,9 +391,7 @@ export function MapScreen() {
       const { data, error } = await getSupabaseClient()
         .from("sightings")
         .insert({
-          seen_at: new Date(
-            selectedOffset < 0 ? selectedTimeWindow.centerMs : Date.now(),
-          ).toISOString(),
+          seen_at: new Date(seenAtMs).toISOString(),
           location: `SRID=4326;POINT(${drawnSighting.start[0]} ${drawnSighting.start[1]})`,
           heading: calculateHeading(drawnSighting.start, drawnSighting.end),
           temperature_c: weather.temperature_c,
@@ -933,6 +955,14 @@ export function MapScreen() {
       return [location.lng, location.lat];
     }
 
+    function getOverlayPosition(event: PointerEvent): Pick<DraftTimeOverlay, "x" | "y"> {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: Math.min(Math.max(event.clientX - rect.left, 40), rect.width - 40),
+        y: Math.max(event.clientY - rect.top, 40),
+      };
+    }
+
     function onPointerDown(event: PointerEvent) {
       if (
         isSavingRef.current ||
@@ -945,7 +975,12 @@ export function MapScreen() {
       event.preventDefault();
       event.stopPropagation();
       const start = getCoordinates(event);
-      activePointerRef.current = { pointerId: event.pointerId, start };
+      const seenAtMs = getSightingTimestamp();
+      activePointerRef.current = { pointerId: event.pointerId, start, seenAtMs };
+      setDraftTimeOverlay({
+        ...getOverlayPosition(event),
+        label: sightingTimeFormatter.format(new Date(seenAtMs)),
+      });
       canvas.setPointerCapture(event.pointerId);
       setIsDrawing(true);
       setDrawingMessage(null);
@@ -965,6 +1000,9 @@ export function MapScreen() {
       renderArrowLayer(activeMap, [
         { id: "draft", start: activePointer.start, end: getCoordinates(event) },
       ]);
+      setDraftTimeOverlay((overlay) =>
+        overlay ? { ...overlay, ...getOverlayPosition(event) } : null,
+      );
     }
 
     function onPointerUp(event: PointerEvent) {
@@ -978,6 +1016,7 @@ export function MapScreen() {
       event.stopPropagation();
       const end = getCoordinates(event);
       activePointerRef.current = null;
+      setDraftTimeOverlay(null);
       setIsDrawing(false);
 
       if (canvas.hasPointerCapture(event.pointerId)) {
@@ -997,7 +1036,7 @@ export function MapScreen() {
       };
       renderArrowLayer(activeMap, [drawn]);
       playReleasePulse(activeMap, activePointer.start);
-      void saveSighting(drawn);
+      void saveSighting(drawn, activePointer.seenAtMs);
     }
 
     function onPointerCancel(event: PointerEvent) {
@@ -1006,6 +1045,7 @@ export function MapScreen() {
       }
 
       activePointerRef.current = null;
+      setDraftTimeOverlay(null);
       setIsDrawing(false);
       renderArrowLayer(activeMap, []);
     }
@@ -1040,6 +1080,7 @@ export function MapScreen() {
     }
 
     activePointerRef.current = null;
+    setDraftTimeOverlay(null);
     setIsDrawing(false);
     setIsAddingSighting(false);
     isSavingRef.current = false;
@@ -1126,6 +1167,15 @@ export function MapScreen() {
   return (
     <main className={`map-screen${isAddingSighting ? " is-drawing" : ""}`}>
       <div ref={containerRef} aria-label="Kartta Helsingistä" className="map-canvas" />
+      {isDrawing && draftTimeOverlay && (
+        <span
+          aria-hidden="true"
+          className="map-draft-time-label"
+          style={{ left: draftTimeOverlay.x, top: draftTimeOverlay.y }}
+        >
+          {draftTimeOverlay.label}
+        </span>
+      )}
 
       <div className="own-layer-control">
         <button
