@@ -1,8 +1,9 @@
 const MINUTE_MS = 60 * 1000;
-const HOUR_MS = 60 * MINUTE_MS;
+const HALF_HOUR_MS = 30 * MINUTE_MS;
 const ANCHOR_STEP_MS = 5 * MINUTE_MS;
 
-export const FUTURE_HOUR_OFFSETS = 23;
+export const MIN_HALF_HOUR_OFFSET = -4;
+export const MAX_HALF_HOUR_OFFSET = 46;
 export const WINDOW_HALF_MINUTES = 30;
 export const MINUTES_PER_WEEK = 7 * 24 * 60;
 
@@ -33,6 +34,7 @@ const weekPartsFormatter = new Intl.DateTimeFormat("en-US", {
 });
 
 export type HelsinkiTimeWindow = {
+  centerMs: number;
   minuteOfWeek: number;
   startLabel: string;
   endLabel: string;
@@ -62,20 +64,23 @@ export function currentTimeAnchor(nowMs: number): number {
 
 export function createHelsinkiTimeWindow(
   anchorMs: number,
-  hourOffset: number,
+  halfHourOffset: number,
 ): HelsinkiTimeWindow {
-  if (!Number.isFinite(anchorMs) || !Number.isInteger(hourOffset)) {
-    throw new RangeError("Time window requires a finite anchor and integer offset.");
+  if (!Number.isFinite(anchorMs) || !Number.isInteger(halfHourOffset)) {
+    throw new RangeError("Time window requires a finite anchor and integer half-hour offset.");
   }
 
-  if (hourOffset < 0 || hourOffset > FUTURE_HOUR_OFFSETS) {
-    throw new RangeError(`Hour offset must be between 0 and ${FUTURE_HOUR_OFFSETS}.`);
+  if (halfHourOffset < MIN_HALF_HOUR_OFFSET || halfHourOffset > MAX_HALF_HOUR_OFFSET) {
+    throw new RangeError(
+      `Half-hour offset must be between ${MIN_HALF_HOUR_OFFSET} and ${MAX_HALF_HOUR_OFFSET}.`,
+    );
   }
 
-  const center = anchorMs + hourOffset * HOUR_MS;
+  const center = anchorMs + halfHourOffset * HALF_HOUR_MS;
   const halfMs = WINDOW_HALF_MINUTES * MINUTE_MS;
 
   return {
+    centerMs: center,
     minuteOfWeek: helsinkiMinuteOfWeek(center),
     startLabel: slotFormatter.format(new Date(center - halfMs)),
     endLabel: slotFormatter.format(new Date(center + halfMs)),

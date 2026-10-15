@@ -14,9 +14,10 @@ import { useAuth } from "@/components/auth-provider";
 import {
   createHelsinkiTimeWindow,
   currentTimeAnchor,
-  FUTURE_HOUR_OFFSETS,
   helsinkiMinuteOfWeek,
   isWithinWindow,
+  MAX_HALF_HOUR_OFFSET,
+  MIN_HALF_HOUR_OFFSET,
   MINUTES_PER_WEEK,
   WINDOW_HALF_MINUTES,
 } from "@/lib/time-window";
@@ -343,7 +344,7 @@ export function MapScreen() {
   const timeFilterRef = useRef(selectedMinute);
 
   const advanceTimeline = useEffectEvent(() => {
-    if (selectedOffset >= FUTURE_HOUR_OFFSETS) {
+    if (selectedOffset >= MAX_HALF_HOUR_OFFSET) {
       setIsTimePlaying(false);
       return;
     }
@@ -366,6 +367,9 @@ export function MapScreen() {
       const { data, error } = await getSupabaseClient()
         .from("sightings")
         .insert({
+          seen_at: new Date(
+            selectedOffset < 0 ? selectedTimeWindow.centerMs : Date.now(),
+          ).toISOString(),
           location: `SRID=4326;POINT(${drawnSighting.start[0]} ${drawnSighting.start[1]})`,
           heading: calculateHeading(drawnSighting.start, drawnSighting.end),
           temperature_c: weather.temperature_c,
@@ -1050,6 +1054,7 @@ export function MapScreen() {
       return;
     }
 
+    setIsTimePlaying(false);
     const map = mapRef.current;
     if (map) {
       setMapGesturesEnabled(map, false);
@@ -1122,23 +1127,6 @@ export function MapScreen() {
     <main className={`map-screen${isAddingSighting ? " is-drawing" : ""}`}>
       <div ref={containerRef} aria-label="Kartta Helsingistä" className="map-canvas" />
 
-      <div className="map-toolbar">
-        <button
-          className="map-toolbar-button map-locate-button"
-          disabled={!isMapLoaded || isLocating || isAddingSighting}
-          onClick={() => requestUserLocation(
-            mapRef,
-            maplibreRef,
-            markerRef,
-            setIsLocating,
-            setLocationMessage,
-          )}
-          type="button"
-        >
-          {isLocating ? "Paikannetaan..." : "Paikanna minut"}
-        </button>
-      </div>
-
       <div className="own-layer-control">
         <button
           aria-checked={onlyOwnSightings}
@@ -1186,12 +1174,47 @@ export function MapScreen() {
         )}
       </div>
 
+      <div className="map-time-dock">
+        <div className="map-time-overlay-actions">
+          <button
+            aria-label={isLocating ? "Paikannetaan..." : "Paikanna minut"}
+            className="map-time-locate"
+            disabled={!isMapLoaded || isLocating || isAddingSighting}
+            onClick={() => requestUserLocation(
+              mapRef,
+              maplibreRef,
+              markerRef,
+              setIsLocating,
+              setLocationMessage,
+            )}
+            title={isLocating ? "Paikannetaan..." : "Paikanna minut"}
+            type="button"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z" />
+              <circle cx="12" cy="10" r="2.5" />
+            </svg>
+          </button>
+          <button
+            aria-label="Palaa nykyhetkeen"
+            className="map-time-now"
+            disabled={!isMapLoaded || isAddingSighting}
+            onClick={() => {
+              setTimelineAnchor(currentTimeAnchor(Date.now()));
+              setSelectedOffset(0);
+              setIsTimePlaying(false);
+            }}
+            type="button"
+          >
+            Nyt
+          </button>
+        </div>
       <section aria-label="Havaintojen aikajana" className="map-time-control">
         <div className="map-time-control-header">
           <button
             aria-label={isTimePlaying ? "Pysäytä tuntien selaus" : "Toista tunnit"}
             className="map-time-play"
-            disabled={!isMapLoaded}
+            disabled={!isMapLoaded || isAddingSighting}
             onClick={() => setIsTimePlaying((playing) => !playing)}
             title={isTimePlaying ? "Pysäytä" : "Toista tunnit"}
             type="button"
@@ -1208,7 +1231,7 @@ export function MapScreen() {
           <button
             className="map-add-button"
             aria-pressed={isAddingSighting}
-            disabled={!isMapLoaded || isSaving}
+            disabled={!isMapLoaded || isSaving || (!isAddingSighting && selectedOffset > 0)}
             onClick={toggleSightingMode}
             type="button"
           >
@@ -1216,25 +1239,12 @@ export function MapScreen() {
           </button>
         </div>
         <div className="map-time-slider-row">
-          <button
-            aria-label="Palaa nykyhetkeen"
-            className="map-time-now"
-            disabled={!isMapLoaded}
-            onClick={() => {
-              setTimelineAnchor(currentTimeAnchor(Date.now()));
-              setSelectedOffset(0);
-              setIsTimePlaying(false);
-            }}
-            type="button"
-          >
-            Nyt
-          </button>
           <input
-            aria-label="Valitse tuleva tunti"
-            aria-valuetext={`${selectedTimeWindow.startLabel}–${selectedTimeWindow.endLabel}, ${selectedOffset} tuntia nykyhetkestä`}
-            disabled={!isMapLoaded}
-            max={FUTURE_HOUR_OFFSETS}
-            min={0}
+            aria-label="Valitse aika nykyhetkestä"
+            aria-valuetext={`${selectedTimeWindow.startLabel}–${selectedTimeWindow.endLabel}, ${new Intl.NumberFormat("fi-FI", { maximumFractionDigits: 1 }).format(selectedOffset / 2)} tuntia nykyhetkestä`}
+            disabled={!isMapLoaded || isAddingSighting}
+            max={MAX_HALF_HOUR_OFFSET}
+            min={MIN_HALF_HOUR_OFFSET}
             onChange={(event) => setSelectedOffset(Number(event.target.value))}
             step={1}
             type="range"
@@ -1243,9 +1253,10 @@ export function MapScreen() {
           <span aria-hidden="true">+23 h</span>
         </div>
         <div aria-hidden="true" className="map-time-ticks">
-          <span>Nyt</span><span>+6 h</span><span>+12 h</span><span>+18 h</span><span>+23 h</span>
+          <span>−2 h</span><span>Nyt</span><span>+6 h</span><span>+12 h</span><span>+18 h</span><span>+23 h</span>
         </div>
       </section>
+      </div>
 
       {hasCenterNotice && (
         <div className="map-center-notices">

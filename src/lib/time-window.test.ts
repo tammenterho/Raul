@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   createHelsinkiTimeWindow,
   currentTimeAnchor,
-  FUTURE_HOUR_OFFSETS,
+  MAX_HALF_HOUR_OFFSET,
+  MIN_HALF_HOUR_OFFSET,
   helsinkiMinuteOfWeek,
   isWithinWindow,
 } from "./time-window";
@@ -31,8 +32,16 @@ describe("Helsinki time window", () => {
     expect(isWithinWindow(10079, 10)).toBe(true);
   });
 
-  it("allows only the next 24 hourly slots", () => {
-    expect(FUTURE_HOUR_OFFSETS).toBe(23);
-    expect(() => createHelsinkiTimeWindow(Date.now(), 24)).toThrow(RangeError);
+  it("allows half-hour slots from two hours ago through 23 hours ahead", () => {
+    const anchor = Date.parse("2026-10-11T10:10:00Z");
+
+    expect(MIN_HALF_HOUR_OFFSET).toBe(-4);
+    expect(MAX_HALF_HOUR_OFFSET).toBe(46);
+    expect(createHelsinkiTimeWindow(anchor, -1).centerMs).toBe(anchor - 30 * 60 * 1000);
+    expect(createHelsinkiTimeWindow(anchor, -4).centerMs).toBe(anchor - 2 * 60 * 60 * 1000);
+    expect(createHelsinkiTimeWindow(anchor, -4).startLabel).toContain("10.40");
+    expect(createHelsinkiTimeWindow(anchor, 1).startLabel).toContain("13.10");
+    expect(() => createHelsinkiTimeWindow(anchor, -5)).toThrow(RangeError);
+    expect(() => createHelsinkiTimeWindow(anchor, 47)).toThrow(RangeError);
   });
 });
